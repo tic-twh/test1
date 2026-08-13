@@ -23,7 +23,10 @@ jobs:
           GIST_ID: "9b1a398db23afbc76d90bc390d0c65db"
         run: |
           cat << 'EOF' > update_script.py
-          import json, requests
+          import os, json, requests
+
+          gist_token = os.environ.get("GIST_TOKEN")
+          gist_id = os.environ.get("GIST_ID")
 
           url = "https://albarvm.teamnote.work/api/rvm/"
           headers = {
@@ -33,40 +36,99 @@ jobs:
               "Referer": "https://hkrvms3.com.hk/"
           }
 
-          # 測試不同的分頁與全量請求 Payload
-          payloads = [
-              {"page_size": 200},
-              {"limit": 200},
-              {"all": True},
-              {}
-          ]
+          filtered_data = []
 
-          raw_data = []
-
-          for p in payloads:
-              try:
-                  res = requests.post(url, json=p, headers=headers, timeout=10)
-                  if res.status_code == 200:
-                      res_json = res.json()
-                      data = res_json.get("results", res_json.get("data", res_json)) if isinstance(res_json, dict) else res_json
-                      if isinstance(data, list) and len(data) > len(raw_data):
-                          raw_data = data
-              except Exception as e:
-                  pass
-
-          print(f"=== 成功解鎖！抓取到機台總數: {len(raw_data)} ===")
-
-          if isinstance(raw_data, list):
-              for idx, item in enumerate(raw_data, start=1):
-                  if not isinstance(item, dict):
-                      continue
+          try:
+              # 保持帶入 {} 空物件即可抓到全量數據
+              res = requests.post(url, json={}, headers=headers, timeout=15)
+              print(f"API HTTP Status: {res.status_code}")
+              
+              if res.status_code == 200:
+                  res_json = res.json()
                   
-                  name_zht = item.get("name_zht") or item.get("name") or "無名稱"
-                  addr_zht = item.get("address_zht") or item.get("address") or "無地址"
-                  
-                  # 印出包含彩、名都、上水、北區的機台
-                  full_info = name_zht + addr_zht
-                  if any(k in full_info for k in ["彩", "名都", "上水", "粉嶺", "北區"]):
-                      print(f"👉 [{idx}] {name_zht} | {addr_zht}")
+                  # 關鍵解析：優先取得 'results' 欄位，否則檢查 'data' 或直接使用 res_json
+                  if isinstance(res_json, dict):
+                      raw_data = res_json.get("results") or res_json.get("data") or []
+                  elif isinstance(res_json, list):
+                      raw_data = res_json
+                  else:
+                      raw_data = []
+
+                  print(f"成功解析出機台列表，筆數: {len(raw_data)}")
+
+                  for item in raw_data:
+                      if not isinstance(item, dict):
+                          continue
+
+                      # 安全地組合成完整的檢索字串
+                      name_zht = str(item.get("name_zht") or item.get("name") or "")
+                      addr_zht = str(item.get("address_zht") or item.get("address") or "")
+                      name_en  = str(item.get("name_en") or "")
+                      addr_en  = str(item.get("address_en") or "")
+                      
+                      full_text = f"{name_zht} {addr_zht} {name_en} {addr_en}"
+
+                      # 比對彩園或名都關鍵字
+                      is_choi_yuen = any(k in full_text for k in ["彩園", "Choi Yuen"])
+                      is_metro_town = any(k in full_text for k in ["名都", "Metro Town", "MetroTown"])
+
+                      if is_choi_yuen or is_metro_town:
+                          bin_count = item.get("bin_count") or 0
+                          try:
+                              bin_count = int(bin_count)
+                          except:
+                              bin_count = 0
+
+                          # 計算容量 (假設滿載 1200 樽，最高 100%)
+                          cap_percent = min(100, int((bin_count / 1200.0) * 100))
+
+                          status_raw = str(item.get("status") or "").upper()
+                          under_maint = item.get("under_maintenance", False)
+
+                          if under_maint or "OFF" in status_raw or "MAINT" in status_raw:
+                              status = "MAINTENANCE"
+                          elif "FULL" in status_raw or cap_percent >= 95:
+                              status = "FULL"
+                          elif "ALMOST" in status_raw or cap_percent >= 80:
+                              status = "ALMOST_FULL"
+                          else:
+                              status = "SERVICE"
+
+                          display_name = "彩園邨彩園商場地下入口處" if is_choi_yuen else "上水名都商場 L2 平台"
+
+                          filtered_data.append({
+                              "name": display_name,
+                              "cap": cap_percent,
+                              "status": status
+                          })
+                          print(f"✅ 成功命中: {display_name} | 樽數: {bin_count} ({cap_percent}%) | 狀態: {status}")
+
+          except Exception as e:
+              print(f"❌ 執行過程發生例外: {e}")
+
+          # 保底機制，避免 ESP32 讀取空檔當機
+          if not filtered_data:
+              print("⚠️ 警告：未獲取到資料，載入預設值")
+              filtered_data = [
+                  {"name": "彩園邨彩園商場地下入口處", "cap": 0, "status": "SERVICE"},
+                  {"name": "上水名都商場 L2 平台", "cap": 0, "status": "SERVICE"}
+              ]
+
+          # 更新 GitHub Gist
+          gist_url = f"https://api.github.com/gists/{gist_id}"
+          gist_headers = {
+              "Authorization": f"token {gist_token}",
+              "Accept": "application/vnd.github.v3+json"
+          }
+          payload = {
+              "files": {
+                  "rvm.json": {
+                      "content": json.dumps(filtered_data, ensure_ascii=False, indent=2)
+                  }
+              }
+          }
+
+          patch_res = requests.patch(gist_url, json=payload, headers=gist_headers)
+          print(f"🎉 Gist Patch Status: {patch_res.status_code}")
           EOF
           python update_script.py
