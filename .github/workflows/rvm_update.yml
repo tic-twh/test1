@@ -33,23 +33,40 @@ jobs:
               "Referer": "https://hkrvms3.com.hk/"
           }
 
-          try:
-              res = requests.post(url, json={}, headers=headers, timeout=10)
-              if res.status_code == 200:
-                  res_json = res.json()
-                  raw_data = res_json.get("data", res_json) if isinstance(res_json, dict) else res_json
+          # 測試不同的分頁與全量請求 Payload
+          payloads = [
+              {"page_size": 200},
+              {"limit": 200},
+              {"all": True},
+              {}
+          ]
 
-                  print(f"=== 全港機台總數: {len(raw_data)} ===")
-                  if isinstance(raw_data, list):
-                      for idx, item in enumerate(raw_data, start=1):
-                          if not isinstance(item, dict):
-                              continue
-                          
-                          name_zht = item.get("name_zht") or item.get("name") or "無名稱"
-                          addr_zht = item.get("address_zht") or item.get("address") or "無地址"
-                          
-                          print(f"[{idx}] {name_zht} | {addr_zht}")
-          except Exception as e:
-              print(f"Error: {e}")
+          raw_data = []
+
+          for p in payloads:
+              try:
+                  res = requests.post(url, json=p, headers=headers, timeout=10)
+                  if res.status_code == 200:
+                      res_json = res.json()
+                      data = res_json.get("results", res_json.get("data", res_json)) if isinstance(res_json, dict) else res_json
+                      if isinstance(data, list) and len(data) > len(raw_data):
+                          raw_data = data
+              except Exception as e:
+                  pass
+
+          print(f"=== 成功解鎖！抓取到機台總數: {len(raw_data)} ===")
+
+          if isinstance(raw_data, list):
+              for idx, item in enumerate(raw_data, start=1):
+                  if not isinstance(item, dict):
+                      continue
+                  
+                  name_zht = item.get("name_zht") or item.get("name") or "無名稱"
+                  addr_zht = item.get("address_zht") or item.get("address") or "無地址"
+                  
+                  # 印出包含彩、名都、上水、北區的機台
+                  full_info = name_zht + addr_zht
+                  if any(k in full_info for k in ["彩", "名都", "上水", "粉嶺", "北區"]):
+                      print(f"👉 [{idx}] {name_zht} | {addr_zht}")
           EOF
           python update_script.py
