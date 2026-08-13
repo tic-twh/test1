@@ -36,15 +36,20 @@ jobs:
           try:
               res = requests.post(url, json={}, headers=headers, timeout=10)
               if res.status_code == 200:
-                  raw_data = res.json()
+                  res_json = res.json()
+                  # 如果外層是 dict 就取 data，如果是 list 就直接用
+                  raw_data = res_json.get("data", res_json) if isinstance(res_json, dict) else res_json
+                  
                   print("=== 正在搜尋北區/上水附近的所有站點名稱 ===")
-                  for item in raw_data:
-                      name_zht = str(item.get("name_zht", ""))
-                      addr_zht = str(item.get("address_zht", ""))
-                      
-                      # 只要包含上水、粉嶺、北區、彩、名都任何一個字就印出來
-                      if any(k in name_zht + addr_zht for k in ["上水", "粉嶺", "北區", "彩", "名都"]):
-                          print(f"👉 找到站點 | 名稱: {name_zht} | 地址: {addr_zht} | 狀態: {item.get('status')}")
+                  if isinstance(raw_data, list):
+                      for item in raw_data:
+                          if isinstance(item, dict):
+                              name_zht = str(item.get("name_zht") or item.get("name") or "")
+                              addr_zht = str(item.get("address_zht") or item.get("address") or "")
+                              
+                              # 關鍵字篩選
+                              if any(k in name_zht + addr_zht for k in ["上水", "粉嶺", "北區", "彩", "名都"]):
+                                  print(f"👉 找到站點 | 名稱: {name_zht} | 地址: {addr_zht} | 狀態: {item.get(\"status\")}")
           except Exception as e:
               print(f"Error: {e}")
           '
