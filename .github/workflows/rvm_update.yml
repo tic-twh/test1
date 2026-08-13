@@ -23,10 +23,7 @@ jobs:
           GIST_ID: "9b1a398db23afbc76d90bc390d0c65db"
         run: |
           python -c '
-          import os, json, requests, sys
-
-          gist_token = os.environ.get("GIST_TOKEN")
-          gist_id = os.environ.get("GIST_ID")
+          import os, json, requests
 
           url = "https://albarvm.teamnote.work/api/rvm/"
           headers = {
@@ -36,69 +33,18 @@ jobs:
               "Referer": "https://hkrvms3.com.hk/"
           }
 
-          filtered_data = []
-
           try:
               res = requests.post(url, json={}, headers=headers, timeout=10)
               if res.status_code == 200:
                   raw_data = res.json()
-                  if isinstance(raw_data, list):
-                      for item in raw_data:
-                          # 取得中文名稱與位址
-                          name_zht = item.get("name_zht", "") or item.get("name", "")
-                          addr_zht = item.get("address_zht", "") or ""
-                          full_text = name_zht + addr_zht
-
-                          # 匹配彩園與名都機台
-                          if "彩園" in full_text or "名都" in full_text:
-                              bin_count = item.get("bin_count", 0)
-                              # 假設最高容量約 1200 個樽，計算估計百分比 (上限 100%)
-                              cap_percent = min(100, int((bin_count / 1200.0) * 100))
-
-                              status_raw = str(item.get("status", "")).upper()
-                              under_maint = item.get("under_maintenance", False)
-
-                              # 判斷顯示狀態
-                              if under_maint or "OFF" in status_raw or "MAINT" in status_raw:
-                                  status = "MAINTENANCE"
-                              elif "FULL" in status_raw or cap_percent >= 95:
-                                  status = "FULL"
-                              elif "ALMOST" in status_raw or cap_percent >= 80:
-                                  status = "ALMOST_FULL"
-                              else:
-                                  status = "SERVICE"
-
-                              display_name = "彩園邨彩園商場地下入口處" if "彩園" in full_text else "上水名都商場 L2 平台"
-                              filtered_data.append({
-                                  "name": display_name,
-                                  "cap": cap_percent,
-                                  "status": status
-                              })
-                              print(f"✅ 成功匹配: {display_name} | 樽數: {bin_count} ({cap_percent}%) | 狀態: {status}")
+                  print("=== 正在搜尋北區/上水附近的所有站點名稱 ===")
+                  for item in raw_data:
+                      name_zht = str(item.get("name_zht", ""))
+                      addr_zht = str(item.get("address_zht", ""))
+                      
+                      # 只要包含上水、粉嶺、北區、彩、名都任何一個字就印出來
+                      if any(k in name_zht + addr_zht for k in ["上水", "粉嶺", "北區", "彩", "名都"]):
+                          print(f"👉 找到站點 | 名稱: {name_zht} | 地址: {addr_zht} | 狀態: {item.get('status')}")
           except Exception as e:
-              print(f"API Error: {e}")
-
-          if not filtered_data:
-              print("❌ 警告: 未搜到資料，載入預設值")
-              filtered_data = [
-                  {"name": "彩園邨彩園商場地下入口處", "cap": 0, "status": "SERVICE"},
-                  {"name": "上水名都商場 L2 平台", "cap": 0, "status": "SERVICE"}
-              ]
-
-          # 更新 Gist
-          gist_url = f"https://api.github.com/gists/{gist_id}"
-          gist_headers = {
-              "Authorization": f"token {gist_token}",
-              "Accept": "application/vnd.github.v3+json"
-          }
-          payload = {
-              "files": {
-                  "rvm.json": {
-                      "content": json.dumps(filtered_data, ensure_ascii=False, indent=2)
-                  }
-              }
-          }
-          
-          patch_res = requests.patch(gist_url, json=payload, headers=gist_headers)
-          print(f"Gist 更新結果 Status Code: {patch_res.status_code}")
+              print(f"Error: {e}")
           '
