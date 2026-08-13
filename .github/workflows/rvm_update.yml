@@ -9,24 +9,13 @@ jobs:
   update-gist:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install dependencies
-        run: pip install requests
-
       - name: Fetch RVM Data & Update Gist
         env:
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
           GIST_ID: "9b1a398db23afbc76d90bc390d0c65db"
         run: |
-          python -c '
-          import os, json, requests
+          python3 -c '
+          import os, json, urllib.request, urllib.error
 
           gist_token = os.environ.get("GIST_TOKEN")
           gist_id = os.environ.get("GIST_ID")
@@ -42,30 +31,29 @@ jobs:
           filtered_data = []
 
           try:
-              res = requests.post(url, json={}, headers=headers, timeout=10)
-              print(f"API Response Code: {res.status_code}")
-              
-              if res.status_code == 200:
-                  res_json = res.json()
-                  raw_data = res_json.get("data") or res_json.get("results") or res_json
-                  if isinstance(raw_data, list):
-                      for item in raw_data:
-                          name = item.get("name_tc", "") or item.get("name", "") or ""
-                          if "彩園" in name or "名都" in name:
-                              cap = int(item.get("capacity") or item.get("cap") or 0)
-                              status_raw = str(item.get("status", "")).upper()
-                              is_online = item.get("is_online", True)
+              req = urllib.request.Request(url, data=b"{}", headers=headers, method="POST")
+              with urllib.request.urlopen(req, timeout=10) as response:
+                  if response.status == 200:
+                      res_json = json.loads(response.read().decode("utf-8"))
+                      raw_data = res_json.get("data") or res_json.get("results") or res_json
+                      if isinstance(raw_data, list):
+                          for item in raw_data:
+                              name = item.get("name_tc", "") or item.get("name", "") or ""
+                              if "彩園" in name or "名都" in name:
+                                  cap = int(item.get("capacity") or item.get("cap") or 0)
+                                  status_raw = str(item.get("status", "")).upper()
+                                  is_online = item.get("is_online", True)
 
-                              if "OFF" in status_raw or "MAIN" in status_raw or not is_online:
-                                  status = "MAINTENANCE"
-                              elif "FULL" in status_raw or cap >= 95:
-                                  status = "FULL"
-                              elif "ALMOST" in status_raw or cap >= 80:
-                                  status = "ALMOST_FULL"
-                              else:
-                                  status = "SERVICE"
+                                  if "OFF" in status_raw or "MAIN" in status_raw or not is_online:
+                                      status = "MAINTENANCE"
+                                  elif "FULL" in status_raw or cap >= 95:
+                                      status = "FULL"
+                                  elif "ALMOST" in status_raw or cap >= 80:
+                                      status = "ALMOST_FULL"
+                                  else:
+                                      status = "SERVICE"
 
-                              filtered_data.append({"name": name, "cap": cap, "status": status})
+                                  filtered_data.append({"name": name, "cap": cap, "status": status})
           except Exception as e:
               print(f"API Fetch Error: {e}")
 
@@ -79,7 +67,8 @@ jobs:
           gist_url = f"https://api.github.com/gists/{gist_id}"
           gist_headers = {
               "Authorization": f"token {gist_token}",
-              "Accept": "application/vnd.github.v3+json"
+              "Accept": "application/vnd.github.v3+json",
+              "Content-Type": "application/json"
           }
           payload = {
               "files": {
@@ -89,6 +78,12 @@ jobs:
               }
           }
           
-          patch_res = requests.patch(gist_url, json=payload, headers=gist_headers)
-          print(f"Gist Patch Status: {patch_res.status_code}")
+          patch_req = urllib.request.Request(
+              gist_url, 
+              data=json.dumps(payload).encode("utf-8"), 
+              headers=gist_headers, 
+              method="PATCH"
+          )
+          with urllib.request.urlopen(patch_req) as patch_res:
+              print(f"Gist Patch Status: {patch_res.status}")
           '
