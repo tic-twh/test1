@@ -39,34 +39,16 @@ jobs:
                   res_json = res.json()
                   raw_data = res_json.get("data", res_json) if isinstance(res_json, dict) else res_json
 
-                  print("=== 🔍 開始列出北區 / 上水附近所有機台列表 ===")
+                  print(f"=== 全港機台總數: {len(raw_data)} ===")
                   if isinstance(raw_data, list):
-                      found_count = 0
-                      for item in raw_data:
+                      for idx, item in enumerate(raw_data, start=1):
                           if not isinstance(item, dict):
                               continue
-
-                          # 收集該機台的所有可能文字欄位
-                          all_text = " ".join([
-                              str(item.get("name_zht", "")),
-                              str(item.get("name_en", "")),
-                              str(item.get("name", "")),
-                              str(item.get("address_zht", "")),
-                              str(item.get("address_en", "")),
-                              str(item.get("district", ""))
-                          ])
-
-                          # 只要包含北區、上水、粉嶺或 Sheung Shui 等關鍵字就印出
-                          keywords = ["彩", "名都", "上水", "NORTH", "SHEUNG SHUI", "CHOI YUEN"]
-                          if any(k.upper() in all_text.upper() for k in keywords):
-                              found_count += 1
-                              print(f"📍 機台 {found_count}:")
-                              print(f"   - name_zht : {item.get('name_zht')}")
-                              print(f"   - name_en  : {item.get('name_en')}")
-                              print(f"   - address  : {item.get('address_zht')}")
-                              print(f"   - bin_count: {item.get('bin_count')}")
-                              print(f"   - status   : {item.get('status')}")
-                              print("-" * 50)
+                          
+                          name_zht = item.get("name_zht") or item.get("name") or "無名稱"
+                          addr_zht = item.get("address_zht") or item.get("address") or "無地址"
+                          
+                          print(f"[{idx}] {name_zht} | {addr_zht}")
           except Exception as e:
               print(f"Error: {e}")
           EOF
