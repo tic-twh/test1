@@ -9,10 +9,13 @@ jobs:
   update-gist:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.12'
 
       - name: Install dependencies
         run: pip install requests
@@ -28,7 +31,6 @@ jobs:
           gist_token = os.environ.get("GIST_TOKEN")
           gist_id = os.environ.get("GIST_ID")
 
-          # 💡 更新為你從 Network 面板找到的正確 API 網址
           url = "https://albarvm.teamnote.work/api/rvm/"
           headers = {
               "Content-Type": "application/json",
@@ -45,7 +47,6 @@ jobs:
               
               if res.status_code == 200:
                   res_json = res.json()
-                  # 支援兩種常見的 key 名稱 (data 或 results)
                   raw_data = res_json.get("data") or res_json.get("results") or res_json
                   if isinstance(raw_data, list):
                       for item in raw_data:
@@ -68,7 +69,6 @@ jobs:
           except Exception as e:
               print(f"API Fetch Error: {e}")
 
-          # 如果 API 未抓到資料的保底機制
           if not filtered_data:
               print("Using fallback default data...")
               filtered_data = [
@@ -76,7 +76,6 @@ jobs:
                   {"name": "上水名都商場 L2 平台", "cap": 0, "status": "SERVICE"}
               ]
 
-          # 更新至 GitHub Gist
           gist_url = f"https://api.github.com/gists/{gist_id}"
           gist_headers = {
               "Authorization": f"token {gist_token}",
