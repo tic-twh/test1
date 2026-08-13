@@ -1,0 +1,39 @@
+name: Update RVM Status
+
+on:
+  schedule:
+    - cron: '*/5 * * * *' # 每 5 分鐘自動執行一次
+  workflow_dispatch: # 支援手動觸發
+
+jobs:
+  update-gist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch and Process RVM Data
+        env:
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: "9b1a398db23afbc76d90bc390d0c65db"
+        run: |
+          RESPONSE=$(curl -s -X POST "https://hkrvm.com.hk/hkrvm/api/rvm/getMapList" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+
+          FILTERED_JSON=$(echo "$RESPONSE" | jq '[
+            .data[] | select(.name_tc != null) | select(.name_tc | contains("彩園") or contains("名都")) | {
+              name: .name_tc,
+              cap: (.capacity // .cap // 0 | tonumber),
+              status: (
+                if (.status | tostring | test("OFF|MAIN|^0$|^3$")) or (.is_online == false) then "MAINTENANCE"
+                elif (.status | tostring | test("FULL|^2$")) or ((.capacity // 0 | tonumber) >= 95) then "FULL"
+                elif (.status | tostring | test("ALMOST")) or ((.capacity // 0 | tonumber) >= 80) then "ALMOST_FULL"
+                else "SERVICE"
+                end
+              )
+            }
+          ]')
+
+          PAYLOAD=$(jq -n --arg content "$FILTERED_JSON" '{files: {"rvm.json": {content: $content}}}')
+          curl -s -X PATCH "https://api.github.com/gists/$GIST_ID" \
+            -H "Authorization: token $GIST_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -d "$PAYLOAD"
