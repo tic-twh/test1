@@ -2,8 +2,8 @@ name: Update RVM Status
 
 on:
   schedule:
-    - cron: '*/5 * * * *' # 每 5 分鐘自動執行一次
-  workflow_dispatch: # 支援手動觸發
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   update-gist:
@@ -23,7 +23,7 @@ jobs:
           GIST_ID: "9b1a398db23afbc76d90bc390d0c65db"
         run: |
           python -c '
-          import os, json, requests
+          import os, json, requests, sys
 
           gist_token = os.environ.get("GIST_TOKEN")
           gist_id = os.environ.get("GIST_ID")
@@ -31,7 +31,7 @@ jobs:
           url = "https://albarvm.teamnote.work/api/rvm/"
           headers = {
               "Content-Type": "application/json",
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
               "Origin": "https://hkrvms3.com.hk",
               "Referer": "https://hkrvms3.com.hk/"
           }
@@ -40,17 +40,36 @@ jobs:
 
           try:
               res = requests.post(url, json={}, headers=headers, timeout=10)
-              print(f"API Response Code: {res.status_code}")
+              print(f"[1] API Status Code: {res.status_code}")
               
               if res.status_code == 200:
                   res_json = res.json()
-                  raw_data = res_json.get("data") or res_json.get("results") or res_json
-                  if isinstance(raw_data, list):
+                  
+                  # 如果 API 最外層是 dict，嘗試抓常見的 key
+                  if isinstance(res_json, dict):
+                      raw_data = res_json.get("data") or res_json.get("results") or res_json.get("rvms") or []
+                  else:
+                      raw_data = res_json
+
+                  print(f"[2] 抓取到資料筆數: {len(raw_data) if isinstance(raw_data, list) else 0}")
+
+                  if isinstance(raw_data, list) and len(raw_data) > 0:
+                      # 💡 印出第一筆真實資料結構供除錯
+                      print("[DEBUG 樣板資料]:", json.dumps(raw_data[0], ensure_ascii=False))
+
                       for item in raw_data:
-                          name = item.get("name_tc", "") or item.get("name", "") or ""
+                          # 嘗試搜集所有可能表示名稱的欄位
+                          name = str(item.get("name_tc") or item.get("name") or item.get("location_tc") or item.get("title") or "")
+                          
                           if "彩園" in name or "名都" in name:
-                              cap = int(item.get("capacity") or item.get("cap") or 0)
-                              status_raw = str(item.get("status", "")).upper()
+                              # 嘗試搜集所有可能表示容量的欄位
+                              cap = item.get("capacity") or item.get("cap") or item.get("capacity_percent") or item.get("storage") or 0
+                              try:
+                                  cap = int(cap)
+                              except:
+                                  cap = 0
+
+                              status_raw = str(item.get("status") or item.get("state") or "").upper()
                               is_online = item.get("is_online", True)
 
                               if "OFF" in status_raw or "MAIN" in status_raw or not is_online:
@@ -62,12 +81,16 @@ jobs:
                               else:
                                   status = "SERVICE"
 
-                              filtered_data.append({"name": name, "cap": cap, "status": status})
+                              # 統一名稱呈現
+                              display_name = "彩園邨彩園商場地下入口處" if "彩園" in name else "上水名都商場 L2 平台"
+                              filtered_data.append({"name": display_name, "cap": cap, "status": status})
+                              print(f"✅ 成功匹配到機台: {display_name} | 容量: {cap}% | 狀態: {status}")
+
           except Exception as e:
-              print(f"API Fetch Error: {e}")
+              print(f"API Error: {e}")
 
           if not filtered_data:
-              print("Using fallback default data...")
+              print("[WARNING] 依然沒有匹配到任何機台數據！")
               filtered_data = [
                   {"name": "彩園邨彩園商場地下入口處", "cap": 0, "status": "SERVICE"},
                   {"name": "上水名都商場 L2 平台", "cap": 0, "status": "SERVICE"}
@@ -81,11 +104,11 @@ jobs:
           payload = {
               "files": {
                   "rvm.json": {
-                      "content": json.dumps(filtered_data, ensure_ascii=False)
+                      "content": json.dumps(filtered_data, ensure_ascii=False, indent=2)
                   }
               }
           }
           
           patch_res = requests.patch(gist_url, json=payload, headers=gist_headers)
-          print(f"Gist Patch Status: {patch_res.status_code}")
+          print(f"[3] Gist Patch Status: {patch_res.status_code}")
           '
