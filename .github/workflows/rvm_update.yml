@@ -9,43 +9,87 @@ jobs:
   update-gist:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch and Process RVM Data
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Fetch RVM Data & Update Gist
         env:
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
           GIST_ID: "9b1a398db23afbc76d90bc390d0c65db"
         run: |
-          # 1. 強制設定 Google DNS (8.8.8.8) 避免 GitHub Runner 本身 DNS 解析失敗 (Exit code 6)
-          sudo sed -i '1s/^/nameserver 8.8.8.8\nnameserver 1.1.1.1\n/' /etc/resolv.conf
+          python -c '
+          import os, json, requests
 
-          # 2. 向環保署 API 發送 POST 請求
-          RESPONSE=$(curl -s --connect-timeout 10 --retry 3 --retry-delay 2 -X POST "https://hkrvm.com.hk/hkrvm/api/rvm/getMapList" \
-            -H "Content-Type: application/json" \
-            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+          gist_token = os.environ.get("GIST_TOKEN")
+          gist_id = os.environ.get("GIST_ID")
 
-          # 3. 檢查 Response 是否為空或非 JSON
-          if [ -z "$RESPONSE" ] || ! echo "$RESPONSE" | jq . >/dev/null 2>&1; then
-            echo "Warning: API 請求失敗，寫入預設 fallback 數據"
-            FILTERED_JSON='[{"name":"彩園邨彩園商場地下入口處","cap":0,"status":"SERVICE"},{"name":"上水名都商場 L2 平台","cap":0,"status":"SERVICE"}]'
-          else
-            # 4. 解析遠端 JSON 數據
-            FILTERED_JSON=$(echo "$RESPONSE" | jq '[
-              .data[]? | select(.name_tc != null) | select(.name_tc | contains("彩園") or contains("名都")) | {
-                name: .name_tc,
-                cap: (.capacity // .cap // 0 | tonumber),
-                status: (
-                  if (.status | tostring | test("OFF|MAIN|^0$|^3$")) or (.is_online == false) then "MAINTENANCE"
-                  elif (.status | tostring | test("FULL|^2$")) or ((.capacity // 0 | tonumber) >= 95) then "FULL"
-                  elif (.status | tostring | test("ALMOST")) or ((.capacity // 0 | tonumber) >= 80) then "ALMOST_FULL"
-                  else "SERVICE"
-                  end
-                )
+          # 💡 更新為你從 Network 面板找到的正確 API 網址
+          url = "https://albarvm.teamnote.work/api/rvm/"
+          headers = {
+              "Content-Type": "application/json",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Origin": "https://hkrvms3.com.hk",
+              "Referer": "https://hkrvms3.com.hk/"
+          }
+
+          filtered_data = []
+
+          try:
+              res = requests.post(url, json={}, headers=headers, timeout=10)
+              print(f"API Response Code: {res.status_code}")
+              
+              if res.status_code == 200:
+                  res_json = res.json()
+                  # 支援兩種常見的 key 名稱 (data 或 results)
+                  raw_data = res_json.get("data") or res_json.get("results") or res_json
+                  if isinstance(raw_data, list):
+                      for item in raw_data:
+                          name = item.get("name_tc", "") or item.get("name", "") or ""
+                          if "彩園" in name or "名都" in name:
+                              cap = int(item.get("capacity") or item.get("cap") or 0)
+                              status_raw = str(item.get("status", "")).upper()
+                              is_online = item.get("is_online", True)
+
+                              if "OFF" in status_raw or "MAIN" in status_raw or not is_online:
+                                  status = "MAINTENANCE"
+                              elif "FULL" in status_raw or cap >= 95:
+                                  status = "FULL"
+                              elif "ALMOST" in status_raw or cap >= 80:
+                                  status = "ALMOST_FULL"
+                              else:
+                                  status = "SERVICE"
+
+                              filtered_data.append({"name": name, "cap": cap, "status": status})
+          except Exception as e:
+              print(f"API Fetch Error: {e}")
+
+          # 如果 API 未抓到資料的保底機制
+          if not filtered_data:
+              print("Using fallback default data...")
+              filtered_data = [
+                  {"name": "彩園邨彩園商場地下入口處", "cap": 0, "status": "SERVICE"},
+                  {"name": "上水名都商場 L2 平台", "cap": 0, "status": "SERVICE"}
+              ]
+
+          # 更新至 GitHub Gist
+          gist_url = f"https://api.github.com/gists/{gist_id}"
+          gist_headers = {
+              "Authorization": f"token {gist_token}",
+              "Accept": "application/vnd.github.v3+json"
+          }
+          payload = {
+              "files": {
+                  "rvm.json": {
+                      "content": json.dumps(filtered_data, ensure_ascii=False)
+                  }
               }
-            ]')
-          fi
-
-          # 5. 更新 GitHub Gist
-          PAYLOAD=$(jq -n --arg content "$FILTERED_JSON" '{files: {"rvm.json": {content: $content}}}')
-          curl -s -X PATCH "https://api.github.com/gists/$GIST_ID" \
-            -H "Authorization: token $GIST_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            -d "$PAYLOAD"
+          }
+          
+          patch_res = requests.patch(gist_url, json=payload, headers=gist_headers)
+          print(f"Gist Patch Status: {patch_res.status_code}")
+          '
