@@ -40,62 +40,52 @@ jobs:
 
           try:
               res = requests.post(url, json={}, headers=headers, timeout=10)
-              print(f"[1] API Status Code: {res.status_code}")
-              
               if res.status_code == 200:
-                  res_json = res.json()
-                  
-                  # 如果 API 最外層是 dict，嘗試抓常見的 key
-                  if isinstance(res_json, dict):
-                      raw_data = res_json.get("data") or res_json.get("results") or res_json.get("rvms") or []
-                  else:
-                      raw_data = res_json
-
-                  print(f"[2] 抓取到資料筆數: {len(raw_data) if isinstance(raw_data, list) else 0}")
-
-                  if isinstance(raw_data, list) and len(raw_data) > 0:
-                      # 💡 印出第一筆真實資料結構供除錯
-                      print("[DEBUG 樣板資料]:", json.dumps(raw_data[0], ensure_ascii=False))
-
+                  raw_data = res.json()
+                  if isinstance(raw_data, list):
                       for item in raw_data:
-                          # 嘗試搜集所有可能表示名稱的欄位
-                          name = str(item.get("name_tc") or item.get("name") or item.get("location_tc") or item.get("title") or "")
-                          
-                          if "彩園" in name or "名都" in name:
-                              # 嘗試搜集所有可能表示容量的欄位
-                              cap = item.get("capacity") or item.get("cap") or item.get("capacity_percent") or item.get("storage") or 0
-                              try:
-                                  cap = int(cap)
-                              except:
-                                  cap = 0
+                          # 取得中文名稱與位址
+                          name_zht = item.get("name_zht", "") or item.get("name", "")
+                          addr_zht = item.get("address_zht", "") or ""
+                          full_text = name_zht + addr_zht
 
-                              status_raw = str(item.get("status") or item.get("state") or "").upper()
-                              is_online = item.get("is_online", True)
+                          # 匹配彩園與名都機台
+                          if "彩園" in full_text or "名都" in full_text:
+                              bin_count = item.get("bin_count", 0)
+                              # 假設最高容量約 1200 個樽，計算估計百分比 (上限 100%)
+                              cap_percent = min(100, int((bin_count / 1200.0) * 100))
 
-                              if "OFF" in status_raw or "MAIN" in status_raw or not is_online:
+                              status_raw = str(item.get("status", "")).upper()
+                              under_maint = item.get("under_maintenance", False)
+
+                              # 判斷顯示狀態
+                              if under_maint or "OFF" in status_raw or "MAINT" in status_raw:
                                   status = "MAINTENANCE"
-                              elif "FULL" in status_raw or cap >= 95:
+                              elif "FULL" in status_raw or cap_percent >= 95:
                                   status = "FULL"
-                              elif "ALMOST" in status_raw or cap >= 80:
+                              elif "ALMOST" in status_raw or cap_percent >= 80:
                                   status = "ALMOST_FULL"
                               else:
                                   status = "SERVICE"
 
-                              # 統一名稱呈現
-                              display_name = "彩園邨彩園商場地下入口處" if "彩園" in name else "上水名都商場 L2 平台"
-                              filtered_data.append({"name": display_name, "cap": cap, "status": status})
-                              print(f"✅ 成功匹配到機台: {display_name} | 容量: {cap}% | 狀態: {status}")
-
+                              display_name = "彩園邨彩園商場地下入口處" if "彩園" in full_text else "上水名都商場 L2 平台"
+                              filtered_data.append({
+                                  "name": display_name,
+                                  "cap": cap_percent,
+                                  "status": status
+                              })
+                              print(f"✅ 成功匹配: {display_name} | 樽數: {bin_count} ({cap_percent}%) | 狀態: {status}")
           except Exception as e:
               print(f"API Error: {e}")
 
           if not filtered_data:
-              print("[WARNING] 依然沒有匹配到任何機台數據！")
+              print("❌ 警告: 未搜到資料，載入預設值")
               filtered_data = [
                   {"name": "彩園邨彩園商場地下入口處", "cap": 0, "status": "SERVICE"},
                   {"name": "上水名都商場 L2 平台", "cap": 0, "status": "SERVICE"}
               ]
 
+          # 更新 Gist
           gist_url = f"https://api.github.com/gists/{gist_id}"
           gist_headers = {
               "Authorization": f"token {gist_token}",
@@ -110,5 +100,5 @@ jobs:
           }
           
           patch_res = requests.patch(gist_url, json=payload, headers=gist_headers)
-          print(f"[3] Gist Patch Status: {patch_res.status_code}")
+          print(f"Gist 更新結果 Status Code: {patch_res.status_code}")
           '
