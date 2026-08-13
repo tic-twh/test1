@@ -25,6 +25,9 @@ jobs:
           cat << 'EOF' > update_script.py
           import os, json, requests
 
+          gist_token = os.environ.get("GIST_TOKEN")
+          gist_id = os.environ.get("GIST_ID")
+
           url = "https://albarvm.teamnote.work/api/rvm/"
           headers = {
               "Content-Type": "application/json",
@@ -33,27 +36,91 @@ jobs:
               "Referer": "https://hkrvms3.com.hk/"
           }
 
+          filtered_data = []
+
           try:
               res = requests.post(url, json={}, headers=headers, timeout=15)
-              print(f"API Response Type: {type(res.json())}")
+              print(f"API HTTP Status: {res.status_code}")
               
-              data = res.json()
-              
-              # 如果外層是 dict，印出它所有的 Key
-              if isinstance(data, dict):
-                  print(f"Root Dict Keys: {list(data.keys())}")
-                  # 檢查常見的包裝 Key
-                  for k in ["results", "data", "items", "rvms", "list"]:
-                      if k in data:
-                          print(f"Key '{k}' 裡面的資料型態: {type(data[k])}, 長度: {len(data[k]) if hasattr(data[k], '__len__') else 'N/A'}")
+              if res.status_code == 200:
+                  res_json = res.json()
+                  # 破案關鍵：資料位在 ['rvms'] 欄位
+                  raw_data = res_json.get("rvms", [])
+                  print(f"成功取得機台清單，總數: {len(raw_data)}")
 
-              # 如果外層是 list，印出第一個元素的 Key
-              elif isinstance(data, list):
-                  print(f"Root List 長度: {len(data)}")
-                  if len(data) > 0 and isinstance(data[0], dict):
-                      print(f"第一個元素的 Keys: {list(data[0].keys())}")
+                  for item in raw_data:
+                      if not isinstance(item, dict):
+                          continue
+
+                      # 整合名稱與地址字串
+                      name_zht = str(item.get("name_zht") or item.get("name") or "")
+                      addr_zht = str(item.get("address_zht") or item.get("address") or "")
+                      name_en  = str(item.get("name_en") or "")
+                      addr_en  = str(item.get("address_en") or "")
+                      
+                      full_text = f"{name_zht} {addr_zht} {name_en} {addr_en}"
+
+                      # 比對彩園或名都關鍵字
+                      is_choi_yuen = any(k in full_text for k in ["彩園", "Choi Yuen"])
+                      is_metro_town = any(k in full_text for k in ["名都", "Metro Town", "MetroTown"])
+
+                      if is_choi_yuen or is_metro_town:
+                          bin_count = item.get("bin_count") or 0
+                          try:
+                              bin_count = int(bin_count)
+                          except:
+                              bin_count = 0
+
+                          # 計算容量 (假設上限 1200 樽，最高 100%)
+                          cap_percent = min(100, int((bin_count / 1200.0) * 100))
+
+                          status_raw = str(item.get("status") or "").upper()
+                          under_maint = item.get("under_maintenance", False)
+
+                          if under_maint or "OFF" in status_raw or "MAINT" in status_raw:
+                              status = "MAINTENANCE"
+                          elif "FULL" in status_raw or cap_percent >= 95:
+                              status = "FULL"
+                          elif "ALMOST" in status_raw or cap_percent >= 80:
+                              status = "ALMOST_FULL"
+                          else:
+                              status = "SERVICE"
+
+                          display_name = "彩園邨彩園商場地下入口處" if is_choi_yuen else "上水名都商場 L2 平台"
+
+                          filtered_data.append({
+                              "name": display_name,
+                              "cap": cap_percent,
+                              "status": status
+                          })
+                          print(f"✅ 成功命中: {display_name} | 樽數: {bin_count} ({cap_percent}%) | 狀態: {status}")
 
           except Exception as e:
-              print(f"解析 Error: {e}")
+              print(f"❌ 執行過程發生例外: {e}")
+
+          # 保底機制，避免 ESP32 讀到空陣列當機
+          if not filtered_data:
+              print("⚠️ 警告：未匹配到機台，載入預設值")
+              filtered_data = [
+                  {"name": "彩園邨彩園商場地下入口處", "cap": 0, "status": "SERVICE"},
+                  {"name": "上水名都商場 L2 平台", "cap": 0, "status": "SERVICE"}
+              ]
+
+          # 更新 GitHub Gist
+          gist_url = f"https://api.github.com/gists/{gist_id}"
+          gist_headers = {
+              "Authorization": f"token {gist_token}",
+              "Accept": "application/vnd.github.v3+json"
+          }
+          payload = {
+              "files": {
+                  "rvm.json": {
+                      "content": json.dumps(filtered_data, ensure_ascii=False, indent=2)
+                  }
+              }
+          }
+
+          patch_res = requests.patch(gist_url, json=payload, headers=gist_headers)
+          print(f"🎉 Gist Patch Status: {patch_res.status_code}")
           EOF
           python update_script.py
